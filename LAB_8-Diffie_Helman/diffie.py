@@ -1,5 +1,5 @@
 p=int(input("prime no.: "))
-a=int(input("premitive root: "))
+a=int(input("primitive root: "))
 
 PvA=int(input("PvA:"))
 PvB=int(input("PvB:"))
