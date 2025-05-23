@@ -3,6 +3,15 @@
 ## Overview
 This is a comprehensive key management system that implements various cryptographic operations including key generation, storage, exchange, revocation, and authentication. The system supports both symmetric (AES) and asymmetric (RSA) encryption.
 
+## Features
+
+- Certificate Authority (CA) for user authentication
+- User-specific key pairs and certificates
+- Message signing and verification with JSON formatting
+- REST API for integration with Postman
+- Secure key storage and management
+- Key revocation support
+
 ## Project Structure
 ```
 attempt3/
@@ -46,37 +55,138 @@ attempt3/
 
 ## Installation
 
-### Prerequisites
-- Python 3.8 or higher
-- cryptography library
-
-### Setup
-1. Create a virtual environment:
+1. Clone the repository
+2. Create a virtual environment:
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
-
-2. Install dependencies:
+3. Install dependencies:
 ```bash
-pip install cryptography
+   pip install -r requirements.txt
+   ```
+
+## API Usage with Postman
+
+The system provides a REST API that can be tested using Postman. The base URL is `http://localhost:5000/api`.
+
+### 1. Register a User
+
+**Endpoint:** `POST /api/register`
+
+**Request Body:**
+```json
+{
+    "user_id": "your_user_id"
+}
 ```
 
-## Usage
-
-### Running the System
-```bash
-python main.py
+**Response:**
+```json
+{
+    "status": "success",
+    "user_id": "your_user_id",
+    "private_key": "-----BEGIN PRIVATE KEY-----\n..."
+}
 ```
 
-The main interface provides options for:
-1. Generating AES keys
-2. Generating RSA key pairs
-3. Managing X.509 certificates
-4. Revoking keys
-5. Checking key revocation status
-6. Signing and verifying messages
-7. Performing key exchange
+### 2. Sign a Message
+
+**Endpoint:** `POST /api/sign`
+
+**Request Body:**
+```json
+{
+    "user_id": "your_user_id",
+    "message": "Your message to sign",
+    "private_key": "-----BEGIN PRIVATE KEY-----\n..."
+}
+```
+
+**Response:**
+```json
+{
+    "version": "1.0",
+    "timestamp": "2024-01-01T12:00:00Z",
+    "user_id": "your_user_id",
+    "message": "Your message to sign",
+    "signature": "hex_signature",
+    "certificate": {
+        "serial_number": "123456789",
+        "issuer": "CN=your_user_id,O=User Certificate",
+        "valid_from": "2024-01-01T12:00:00Z",
+        "valid_to": "2025-01-01T12:00:00Z"
+    }
+}
+```
+
+### 3. Verify a Message
+
+**Endpoint:** `POST /api/verify`
+
+**Request Body:**
+```json
+{
+    "signed_message": {
+        "version": "1.0",
+        "timestamp": "2024-01-01T12:00:00Z",
+        "user_id": "your_user_id",
+        "message": "Your message to sign",
+        "signature": "hex_signature",
+        "certificate": {
+            "serial_number": "123456789",
+            "issuer": "CN=your_user_id,O=User Certificate",
+            "valid_from": "2024-01-01T12:00:00Z",
+            "valid_to": "2025-01-01T12:00:00Z"
+        }
+    }
+}
+```
+
+**Response:**
+```json
+{
+    "valid": true,
+    "message_data": {
+        "user_id": "your_user_id",
+        "message": "Your message to sign",
+        "timestamp": "2024-01-01T12:00:00Z",
+        "certificate_info": {
+            "serial_number": "123456789",
+            "issuer": "CN=your_user_id,O=User Certificate",
+            "valid_from": "2024-01-01T12:00:00Z",
+            "valid_to": "2025-01-01T12:00:00Z"
+        }
+    }
+}
+```
+
+If the message is invalid or tampered with:
+```json
+{
+    "valid": false,
+    "error": "Invalid signature"
+}
+```
+
+### 4. Revoke a Certificate
+
+**Endpoint:** `POST /api/revoke`
+
+**Request Body:**
+```json
+{
+    "user_id": "your_user_id"
+}
+```
+
+**Response:**
+```json
+{
+    "status": "success",
+    "message": "Certificate revoked"
+}
+```
 
 ## Security Considerations
 

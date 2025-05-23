@@ -16,7 +16,7 @@ from krl_manager import (
     KRLManager
 )
 from authentication import (
-    sign_message,
+    signed_message,
     verify_signature,
     sign_file,
     verify_file_signature
@@ -27,6 +27,16 @@ from key_ex import (
     get_dh_public_key,
     get_shared_secret
 )
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import padding
+import base64
+from datetime import datetime
+from flask import Flask, request, jsonify
+from ca_manager import ca
+from authentication import auth
 
 # Configure logging
 logging.basicConfig(
@@ -34,6 +44,14 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+
+# Admin password
+ADMIN_PASSWORD = "Admin123"
+
+# Store user sessions
+user_sessions = {}
 
 def create_directories():
     """Create necessary directories for the system."""
@@ -256,6 +274,183 @@ def main():
     except Exception as e:
         logger.error(f"An error occurred: {str(e)}")
         print("\n❌ An error occurred. Check the logs for details.")
+
+@app.route('/api/generate/aes', methods=['GET'])
+def api_generate_aes():
+    """Generate AES key."""
+    try:
+        key = generate_aes_key()
+        return jsonify({
+            "status": "success",
+            "key": base64.b64encode(key).decode('utf-8')
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/generate/rsa', methods=['GET'])
+def api_generate_rsa():
+    """Generate RSA key pair."""
+    try:
+        private_key, public_key = generate_rsa_keys()
+        private_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ).decode('utf-8')
+        
+        public_pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode('utf-8')
+        
+        return jsonify({
+            "status": "success",
+            "private_key": private_pem,
+            "public_key": public_pem
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/setup/user', methods=['POST'])
+def api_setup_user():
+    """Setup new user with ID and private key."""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        private_key_pem = data.get('private_key')
+        
+        if not all([user_id, private_key_pem]):
+            return jsonify({"error": "Missing required fields"}), 400
+            
+        # Load private key
+        private_key = serialization.load_pem_private_key(
+            private_key_pem.encode('utf-8'),
+            password=None,
+            backend=default_backend()
+        )
+        
+        # Register user with CA
+        if ca.register_user(user_id, private_key.public_key()):
+            return jsonify({
+                "status": "success",
+                "message": f"User {user_id} registered successfully"
+            })
+        else:
+            return jsonify({"error": "User registration failed"}), 400
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/login', methods=['POST'])
+def api_login():
+    """Login user with ID and private key."""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        private_key_pem = data.get('private_key')
+        
+        if not all([user_id, private_key_pem]):
+            return jsonify({"error": "Missing required fields"}), 400
+            
+        # Load private key
+        private_key = serialization.load_pem_private_key(
+            private_key_pem.encode('utf-8'),
+            password=None,
+            backend=default_backend()
+        )
+        
+        # Verify user exists and private key matches
+        user_cert = ca.get_user_certificate(user_id)
+        if not user_cert:
+            return jsonify({"error": "User not found"}), 404
+            
+        if private_key.public_key().public_numbers() != user_cert.public_key().public_numbers():
+            return jsonify({"error": "Invalid private key"}), 401
+            
+        # Store user session
+        user_sessions[user_id] = {
+            "private_key": private_key,
+            "login_time": datetime.utcnow().isoformat()
+        }
+        
+        return jsonify({
+            "status": "success",
+            "message": f"User {user_id} logged in successfully"
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/revoke', methods=['POST'])
+def api_revoke():
+    """Revoke user certificate (admin only)."""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        admin_password = data.get('admin_password')
+        
+        if not all([user_id, admin_password]):
+            return jsonify({"error": "Missing required fields"}), 400
+            
+        if admin_password != ADMIN_PASSWORD:
+            return jsonify({"error": "Invalid admin password"}), 401
+            
+        if ca.revoke_user_certificate(user_id):
+            return jsonify({
+                "status": "success",
+                "message": f"User {user_id} certificate revoked"
+            })
+        else:
+            return jsonify({"error": "Certificate revocation failed"}), 400
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/sign', methods=['POST'])
+def api_sign():
+    """Sign a message."""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        message = data.get('message')
+        private_key_pem = data.get('private_key')
+        
+        if not all([user_id, message, private_key_pem]):
+            return jsonify({"error": "Missing required fields"}), 400
+            
+        # Load private key
+        private_key = serialization.load_pem_private_key(
+            private_key_pem.encode('utf-8'),
+            password=None,
+            backend=default_backend()
+        )
+        
+        # Sign message
+        signed_message = auth.sign_message(user_id, message, private_key)
+        if signed_message:
+            return jsonify(signed_message)
+        else:
+            return jsonify({"error": "Message signing failed"}), 400
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/verify', methods=['POST'])
+def api_verify():
+    """Verify a signed message."""
+    try:
+        data = request.get_json()
+        signed_message = data.get('signed_message')
+        
+        if not signed_message:
+            return jsonify({"error": "Signed message is required"}), 400
+            
+        # Verify message
+        result = auth.verify_message(signed_message)
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     main() 
